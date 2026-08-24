@@ -71,6 +71,12 @@
                 </svg>
                 Conversations
             </a>
+            <a href="{{ route('inquiries.index') }}" class="{{ sidebarLink(request()->routeIs('inquiries.*')) }}">
+                <svg class="w-4 h-4 flex-shrink-0 {{ sidebarIcon(request()->routeIs('inquiries.*')) }}" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                </svg>
+                Inquiries
+            </a>
         </div>
 
         <div class="pt-4 pb-1">

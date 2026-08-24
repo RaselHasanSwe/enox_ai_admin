@@ -1,5 +1,6 @@
-const STORE_KEY = 'enox-handoff-notifications';
-const SEEN_KEY = 'enox-handoff-seen-ids';
+const STORE_KEY = 'enox-admin-notifications';
+const SEEN_KEY = 'enox-admin-seen-keys';
+const SUMMARY_KEY = 'enox-admin-summary';
 
 function loadList(key, fallback = []) {
     try {
@@ -11,15 +12,28 @@ function loadList(key, fallback = []) {
 }
 
 function saveList(key, items) {
-    localStorage.setItem(key, JSON.stringify(items.slice(0, 40)));
+    localStorage.setItem(key, JSON.stringify(items.slice(0, 50)));
 }
 
-function playHandoffSound() {
+function loadSeen() {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(SEEN_KEY) || 'null');
+        return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+        return {};
+    }
+}
+
+function saveSeen(seen) {
+    localStorage.setItem(SEEN_KEY, JSON.stringify(seen));
+}
+
+function playAlertSound() {
     try {
         const Ctx = window.AudioContext || window.webkitAudioContext;
         if (!Ctx) return;
-        const ctx = playHandoffSound.ctx || new Ctx();
-        playHandoffSound.ctx = ctx;
+        const ctx = playAlertSound.ctx || new Ctx();
+        playAlertSound.ctx = ctx;
         if (ctx.state === 'suspended') ctx.resume();
         const now = ctx.currentTime;
         [880, 1174].forEach((freq, i) => {
@@ -40,24 +54,58 @@ function playHandoffSound() {
     }
 }
 
-function conversationFromPayload(payload) {
+function itemKey(item) {
+    return `${item.type}:${item.id}:${item.at || item.created_at || ''}`;
+}
+
+function unreadCount(items) {
+    return items.filter((item) => !item.read).length;
+}
+
+function formatCategory(category) {
+    return (category || 'inquiry').replace(/_/g, ' ');
+}
+
+function handoffFromPayload(payload) {
     const data = payload?.data || payload || {};
     const conv = data.conversation || data;
     const id = conv.id || conv.conversation_id || data.conversation_id;
     if (!id) return null;
     return {
+        type: 'handoff',
         id,
-        user_name: conv.user_name || 'Customer',
-        user_email: conv.user_email || '',
-        reason: conv.handoff_reason || data.handoff_reason || 'Customer requested human support',
-        queued_at: conv.queued_at || new Date().toISOString(),
+        title: conv.user_name || 'Customer',
+        subtitle: conv.handoff_reason || data.handoff_reason || 'Customer requested human support',
+        created_at: conv.queued_at || new Date().toISOString(),
         at: Date.now(),
         read: false,
+        url: (() => {
+            const cfg = window.ENOX_ADMIN || {};
+            const url = new URL(cfg.queueUrl || '/handoff', window.location.origin);
+            url.searchParams.set('focus', String(id));
+            return url.toString();
+        })(),
     };
 }
 
-function unreadCount(items) {
-    return items.filter((item) => !item.read).length;
+function inquiryFromPayload(payload) {
+    const data = payload?.data || payload || {};
+    const inquiry = data.inquiry || data;
+    const id = inquiry.id;
+    if (!id) return null;
+    const cfg = window.ENOX_ADMIN || {};
+    const url = new URL(cfg.inquiriesUrl || '/inquiries', window.location.origin);
+    url.pathname = `${url.pathname.replace(/\/$/, '')}/${id}`;
+    return {
+        type: 'inquiry',
+        id,
+        title: inquiry.reference || `Inquiry #${id}`,
+        subtitle: `${formatCategory(inquiry.category)} — ${inquiry.name || inquiry.email || 'Customer'}`,
+        created_at: inquiry.created_at || new Date().toISOString(),
+        at: Date.now(),
+        read: false,
+        url: url.toString(),
+    };
 }
 
 function renderBell() {
@@ -73,39 +121,70 @@ function renderBell() {
     if (bell) bell.classList.toggle('has-unread', count > 0);
     if (!list) return;
     if (!items.length) {
-        list.innerHTML = '<p class="notify-empty">No handoff requests yet.</p>';
+        list.innerHTML = '<p class="notify-empty">No new alerts yet.</p>';
         return;
     }
     list.innerHTML = items.map((item) => `
-        <button type="button" class="notify-item ${item.read ? '' : 'is-unread'}" data-notify-id="${item.id}">
-            <span class="notify-item-title">${window.EnoxChat.escapeHtml(item.user_name)}</span>
-            <span class="notify-item-reason">${window.EnoxChat.escapeHtml(item.reason)}</span>
-            <span class="notify-item-time" data-wait-since="${window.EnoxChat.escapeHtml(item.queued_at)}">${window.EnoxChat.formatWait(item.queued_at)}</span>
+        <button type="button" class="notify-item ${item.read ? '' : 'is-unread'}" data-notify-key="${window.EnoxChat.escapeHtml(itemKey(item))}">
+            <span class="notify-item-title">${window.EnoxChat.escapeHtml(item.title)}</span>
+            <span class="notify-item-reason">${window.EnoxChat.escapeHtml(item.subtitle)}</span>
+            <span class="notify-item-time" data-wait-since="${window.EnoxChat.escapeHtml(item.created_at)}">${window.EnoxChat.formatWait(item.created_at)}</span>
         </button>
     `).join('');
 }
 
-function pushNotification(item, { play = true } = {}) {
-    const seen = new Set(loadList(SEEN_KEY));
-    const seenKey = `${item.id}:${item.queued_at || item.at}`;
-    if (seen.has(seenKey)) return;
-    seen.add(seenKey);
-    saveList(SEEN_KEY, [...seen]);
+function showBrowserNotification(item) {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    const title = item.type === 'handoff' ? 'New handoff request' : 'New inquiry';
+    const options = {
+        body: `${item.title}: ${item.subtitle}`,
+        tag: itemKey(item),
+        data: { url: item.url },
+        icon: '/favicon.ico',
+    };
+    try {
+        if (navigator.serviceWorker?.controller) {
+            navigator.serviceWorker.controller.postMessage({
+                type: 'SHOW_NOTIFICATION',
+                title,
+                options,
+            });
+            return;
+        }
+        const notification = new Notification(title, options);
+        notification.onclick = () => {
+            window.focus();
+            if (item.url) window.location.href = item.url;
+            notification.close();
+        };
+    } catch {
+        // Ignore notification errors in unsupported browsers.
+    }
+}
 
-    const items = loadList(STORE_KEY).filter((row) => row.id !== item.id);
+function pushNotification(item, { play = true, notify = true } = {}) {
+    const seen = loadSeen();
+    const key = itemKey(item);
+    if (seen[key]) return;
+    seen[key] = Date.now();
+    saveSeen(seen);
+
+    const items = loadList(STORE_KEY).filter((row) => itemKey(row) !== key);
     items.unshift(item);
     saveList(STORE_KEY, items);
     renderBell();
-    if (play) playHandoffSound();
+    if (play) playAlertSound();
+    if (notify && document.hidden) showBrowserNotification(item);
 }
 
-function openNotification(id) {
-    const items = loadList(STORE_KEY).map((item) => item.id === Number(id) || String(item.id) === String(id) ? { ...item, read: true } : item);
+function openNotification(key) {
+    const items = loadList(STORE_KEY).map((item) => (
+        itemKey(item) === key ? { ...item, read: true } : item
+    ));
+    const target = items.find((item) => itemKey(item) === key);
     saveList(STORE_KEY, items);
-    const cfg = window.ENOX_ADMIN || {};
-    const url = new URL(cfg.queueUrl || '/handoff', window.location.origin);
-    url.searchParams.set('focus', String(id));
-    window.location.href = url.toString();
+    renderBell();
+    if (target?.url) window.location.href = target.url;
 }
 
 function markAllRead() {
@@ -123,11 +202,75 @@ window.toggleNotifyDropdown = function (event) {
     menu.style.display = isHidden ? 'block' : 'none';
 };
 
+async function registerServiceWorker() {
+    if (!('serviceWorker' in navigator)) return;
+    try {
+        await navigator.serviceWorker.register('/sw.js');
+    } catch {
+        // Service worker registration is optional.
+    }
+}
+
+async function requestNotificationPermission() {
+    if (!('Notification' in window)) return;
+    if (Notification.permission === 'default') {
+        try {
+            await Notification.requestPermission();
+        } catch {
+            // User dismissed the prompt.
+        }
+    }
+}
+
+async function pollNotificationSummary(cfg) {
+    try {
+        const response = await fetch(`${cfg.apiUrl.replace(/\/$/, '')}/admin/notifications/summary`, {
+            headers: {
+                Accept: 'application/json',
+                Authorization: `Bearer ${cfg.token}`,
+            },
+        });
+        if (!response.ok) return;
+        const summary = await response.json();
+        const previous = JSON.parse(localStorage.getItem(SUMMARY_KEY) || '{}');
+        localStorage.setItem(SUMMARY_KEY, JSON.stringify(summary));
+
+        if (summary.pending_inquiries > (previous.pending_inquiries || 0)) {
+            pushNotification({
+                type: 'inquiry',
+                id: `summary-${summary.pending_inquiries}`,
+                title: 'New inquiries waiting',
+                subtitle: `${summary.pending_inquiries} pending inquiry request(s)`,
+                created_at: new Date().toISOString(),
+                at: Date.now(),
+                read: false,
+                url: cfg.inquiriesUrl || '/inquiries',
+            }, { play: false, notify: document.hidden });
+        }
+        if (summary.queued_handoffs > (previous.queued_handoffs || 0)) {
+            pushNotification({
+                type: 'handoff',
+                id: `summary-${summary.queued_handoffs}`,
+                title: 'Handoff queue updated',
+                subtitle: `${summary.queued_handoffs} customer(s) waiting for an agent`,
+                created_at: new Date().toISOString(),
+                at: Date.now(),
+                read: false,
+                url: cfg.queueUrl || '/handoff',
+            }, { play: false, notify: document.hidden });
+        }
+    } catch {
+        // Polling fallback should not break the UI.
+    }
+}
+
 export function initNotifications() {
     const cfg = window.ENOX_ADMIN;
     if (!cfg?.token) return;
 
     renderBell();
+    registerServiceWorker();
+    requestNotificationPermission();
     window.EnoxChat?.tickWaitTimes();
     setInterval(() => window.EnoxChat?.tickWaitTimes(), 1000);
 
@@ -138,8 +281,8 @@ export function initNotifications() {
         if (menu.style.display !== 'none' && !btn.contains(event.target) && !menu.contains(event.target)) {
             menu.style.display = 'none';
         }
-        const item = event.target.closest('[data-notify-id]');
-        if (item) openNotification(item.getAttribute('data-notify-id'));
+        const item = event.target.closest('[data-notify-key]');
+        if (item) openNotification(item.getAttribute('data-notify-key'));
     });
 
     document.getElementById('notify-mark-read')?.addEventListener('click', (e) => {
@@ -148,13 +291,18 @@ export function initNotifications() {
     });
 
     document.addEventListener('click', () => {
-        playHandoffSound.ctx?.resume?.();
+        playAlertSound.ctx?.resume?.();
+        requestNotificationPermission();
     }, { once: true });
 
     const handlePayload = (payload) => {
         if (payload?.event === 'handoff_requested') {
-            const item = conversationFromPayload(payload);
-            if (item) pushNotification(item, { play: true });
+            const item = handoffFromPayload(payload);
+            if (item) pushNotification(item, { play: true, notify: true });
+        }
+        if (payload?.event === 'inquiry_created') {
+            const item = inquiryFromPayload(payload);
+            if (item) pushNotification(item, { play: true, notify: true });
         }
         window.dispatchEvent(new CustomEvent('enox:queue-refresh', { detail: payload }));
     };
@@ -172,4 +320,7 @@ export function initNotifications() {
             try { handlePayload(JSON.parse(event.data)); } catch {}
         };
     } catch {}
+
+    pollNotificationSummary(cfg);
+    setInterval(() => pollNotificationSummary(cfg), 30000);
 }

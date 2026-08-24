@@ -26,6 +26,7 @@
                 wsUrl: @json(rtrim(config('enox.ws_url'), '/')),
                 token: @json(session('enox_access_token')),
                 queueUrl: @json(route('handoff.queue')),
+                inquiriesUrl: @json(route('inquiries.index')),
                 productCdn: @json(rtrim(config('enox.product_cdn'), '/')),
                 agentName: @json(session('enox_user.name')),
             };

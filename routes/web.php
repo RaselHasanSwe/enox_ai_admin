@@ -5,6 +5,7 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ConversationController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\HandoffController;
+use App\Http\Controllers\InquiryController;
 use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\UserController;
 use Illuminate\Support\Facades\Route;
@@ -36,4 +37,8 @@ Route::middleware('enox.auth')->group(function () {
     Route::post('/handoff/{id}/release', [HandoffController::class, 'release'])->name('handoff.release');
     Route::post('/handoff/{id}/resolve', [HandoffController::class, 'resolve'])->name('handoff.resolve');
     Route::post('/presence', [HandoffController::class, 'presence'])->name('presence');
+
+    Route::get('/inquiries', [InquiryController::class, 'index'])->name('inquiries.index');
+    Route::get('/inquiries/{id}', [InquiryController::class, 'show'])->name('inquiries.show');
+    Route::patch('/inquiries/{id}/status', [InquiryController::class, 'updateStatus'])->name('inquiries.status');
 });

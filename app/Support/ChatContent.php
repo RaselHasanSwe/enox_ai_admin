@@ -198,6 +198,42 @@ class ChatContent
         };
     }
 
+    public static function inquiryCategoryLabel(?string $category): string
+    {
+        return match ($category) {
+            'order_cancel_request' => 'Order cancellation',
+            'live_support_request' => 'Live support',
+            'general_support' => 'General support',
+            'order_not_placed' => 'Order not placed',
+            'lost_or_damaged' => 'Lost or damaged',
+            'delivery_failed' => 'Delivery failed',
+            'delivery_delay' => 'Delivery delay',
+            default => $category ? Str::headline(str_replace('_', ' ', $category)) : 'Inquiry',
+        };
+    }
+
+    public static function inquiryStatusLabel(?string $status): string
+    {
+        return match ($status) {
+            'pending' => 'Pending',
+            'in_progress' => 'In progress',
+            'resolved' => 'Resolved',
+            'rejected' => 'Rejected',
+            default => $status ? Str::headline($status) : 'Unknown',
+        };
+    }
+
+    public static function inquiryStatusBadge(?string $status): string
+    {
+        return match ($status) {
+            'pending' => 'queued',
+            'in_progress' => 'info',
+            'resolved' => 'resolved',
+            'rejected' => 'danger',
+            default => 'inactive',
+        };
+    }
+
     public static function readableLine(string $text): string
     {
         $text = preg_replace('/data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+\/=\s]+/', '[Image attached]', $text) ?? $text;

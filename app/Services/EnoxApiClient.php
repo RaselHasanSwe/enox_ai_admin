@@ -156,4 +156,24 @@ class EnoxApiClient
     {
         return $this->client()->put('/admin/settings/business-hours', $data)->throw()->json();
     }
+
+    public function inquiries(array $query = []): array
+    {
+        return $this->client()->get('/admin/inquiries', $query)->throw()->json();
+    }
+
+    public function inquiry(int $id): array
+    {
+        return $this->client()->get("/admin/inquiries/{$id}")->throw()->json();
+    }
+
+    public function updateInquiryStatus(int $id, array $data): array
+    {
+        return $this->client()->patch("/admin/inquiries/{$id}/status", $data)->throw()->json();
+    }
+
+    public function notificationSummary(): array
+    {
+        return $this->client()->get('/admin/notifications/summary')->throw()->json();
+    }
 }
